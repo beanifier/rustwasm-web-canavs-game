@@ -1,33 +1,25 @@
-use wasm_bindgen::prelude::*;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 use std::cell::RefCell;
 use std::rc::Rc;
+use wasm_bindgen::prelude::*;
+use web_sys::*;
+use futures::channel::mpsc::*;
 
-fn swindow() -> web_sys::Window {
-    web_sys::window().expect("no global `window` exists")
-}
+use crate::game::GameSystem;
+use crate::shared::*;
+use crate::shared::window;
+use crate::event::*;
+use crate::event::Event;
+use crate::vector2::Vector2;
 
-fn request_animation_frame(f: &Closure<dyn FnMut()>) {
-    swindow()
-        .request_animation_frame(f.as_ref().unchecked_ref())
-        .expect("should register `requestAnimationFrame` OK");
-}
+mod render;
+mod shared;
+mod event;
+mod vector2;
+mod game;
 
-fn document() -> web_sys::Document {
-    swindow()
-        .document()
-        .expect("should have a document on window")
-}
-
-fn create_img_element_from_url(s: &str) -> HtmlImageElement {
-    let elem = HtmlImageElement::new().expect("Error making img element");
-    elem.set_src(s);
-    elem
-}
-
-#[allow(deprecated)]
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
+    alert!("hi");
     let document = document();
     let canvas = document
         .get_element_by_id("canvas")
@@ -37,49 +29,77 @@ pub fn start() -> Result<(), JsValue> {
         .get_context("2d")?
         .unwrap()
         .dyn_into::<CanvasRenderingContext2d>()?;
-    let animtging = document.timeline();
-    let catimg = create_img_element_from_url("./cat.png");
+
+    let mut game = GameSystem::start();
     
-    let mut x:f64 = 0.0;
-    let mut y:f64 = 0.0;
-    let mut vx:f64 = 0.0005;
-    let mut vy:f64 = 0.0006;
-    let mut prevtime:f64 = animtging.current_time().expect("time??");
-    let mut totaltime:f64 = 0.0;
-    // frame function
-    let mut frame = move |curtime: f64| -> bool {
+    let performance = window().performance().unwrap();
+
+    let (eventtx, mut eventreceive) = unbounded();
+    setup_event_listeners(&canvas, &ctx, eventtx.clone());
+
+    let mut width = window().inner_width().unwrap().as_f64().unwrap()*window().device_pixel_ratio();
+    let mut height = window().inner_height().unwrap().as_f64().unwrap()*window().device_pixel_ratio();
+    canvas.set_width(width as u32);
+    canvas.set_height(height as u32);
+
+    let f = Rc::new(RefCell::new(None));
+    let g = f.clone();
+    let mut prevtime = performance.now();
+    let mut totaltime: f64 = 0.0;
+
+    *g.borrow_mut() = Some(Closure::new(move || {
+        let curtime = performance.now();
         let deltatime = curtime - prevtime;
         prevtime = curtime;
         totaltime += deltatime;
-        x = x + (vx*deltatime);
-        y = y + (vy*deltatime);
-        if (x > 1.0) || (0.0 > x) { vx *= -1.0 }
-        if (y > 1.0) || (0.0 > y) { vy *= -1.0 }
+        game.draw(&ctx, width, height, deltatime, totaltime);
 
-        ctx.set_fill_style_str(&"#000");
-        ctx.fill_rect(0.0, 0.0, 800.0, 600.0);
 
-        ctx.set_fill_style_str(&(format!("hsl({} 100% 50%)", totaltime * 0.5)));
-        ctx.fill_rect(x*750.0, y*550.0, 50.0, 50.0);
-        ctx.draw_image_with_html_image_element_and_dw_and_dh(&catimg, x*750.0, y*550.0, 50.0, 50.0).unwrap();
+        while let Ok(Some(x)) = eventreceive.try_next() {
+            match x {
+                Event::ResizeEvent { width: w, height: h } => {
+                    width = w; height = h;
+                    window().scroll_to_with_x_and_y(0.0, 0.0);
+                    canvas.set_width(width as u32);
+                    canvas.set_height(height as u32);
+                    game.on_resize(Vector2 { x: width, y: height });
+                },
+                Event::PointerDownEvent { position, pointertype, button, pointerid, isprimary } => {
+                    game.pointer_down(position, pointertype, button, pointerid, isprimary);
+                },
+                Event::PointerMoveEvent { position, movement, pointertype, pointerid, isprimary } => {
+                    game.pointer_move(position, movement, pointertype, pointerid, isprimary);
+                },
+                Event::PointerUpEvent { position, pointertype, button, pointerid, isprimary } => {
+                    game.pointer_up(position, pointertype, button, pointerid, isprimary);
+                },
+                _ => {
+                    alert!("todo");
+                }
+            }
+        }
 
-        ctx.set_fill_style_str(&"#FFF");
-        ctx.set_font(&"bold 1em monospace");
-        ctx.fill_text(&(format!("dt: {} tt: {} fps: {}", deltatime, totaltime, (1000.0/deltatime).round())), 0.0, 10.0).unwrap();
-        true 
-    };
-
-    // frame callback closure
-    let f = Rc::new(RefCell::new(None));
-    let g = f.clone();
-    *g.borrow_mut() = Some(Closure::new(move || {
-        if !(frame(animtging.current_time().expect("time??"))) {return}
-
-        // Schedule ourself for another requestAnimationFrame callback.
+        
+        
         request_animation_frame(f.borrow().as_ref().unwrap());
     }));
 
     request_animation_frame(g.borrow().as_ref().unwrap());
 
     Ok(())
+}
+
+#[allow(unused_variables)]
+pub trait Game {
+    fn start() -> Self;
+
+    fn draw(self: &mut Self, ctx: &CanvasRenderingContext2d, width: f64, height: f64, dt: f64, tt: f64);
+
+    fn on_resize(self: &mut Self, size: Vector2) {}
+
+    fn pointer_down(self: &mut Self, position: Vector2, pointertype: i8, button: i8, pointerid: i32, isprimary: bool) {}
+
+    fn pointer_move(self: &mut Self, position: Vector2, movement: Vector2, pointertype: i8, pointerid: i32, isprimary: bool) {}
+
+    fn pointer_up(self: &mut Self, position: Vector2, pointertype: i8, button: i8, pointerid: i32, isprimary: bool) {}
 }
