@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use web_sys::{HtmlCanvasElement, CanvasRenderingContext2d};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, HtmlImageElement};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,6 +19,12 @@ fn document() -> web_sys::Document {
         .expect("should have a document on window")
 }
 
+fn create_img_element_from_url(s: &str) -> HtmlImageElement {
+    let elem = HtmlImageElement::new().expect("Error making img element");
+    elem.set_src(s);
+    elem
+}
+
 #[allow(deprecated)]
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
@@ -31,25 +37,35 @@ pub fn start() -> Result<(), JsValue> {
         .get_context("2d")?
         .unwrap()
         .dyn_into::<CanvasRenderingContext2d>()?;
+    let animtging = document.timeline();
+    let catimg = create_img_element_from_url("./cat.png");
     
     let mut x:f64 = 0.0;
     let mut y:f64 = 0.0;
-    let mut vx:f64 = 0.005;
-    let mut vy:f64 = 0.0066;
-    let mut time:i64 = 0;
-
+    let mut vx:f64 = 0.0005;
+    let mut vy:f64 = 0.0006;
+    let mut prevtime:f64 = animtging.current_time().expect("time??");
+    let mut totaltime:f64 = 0.0;
     // frame function
-    let mut frame = move || -> bool {
-        time += 1;
-        x = x + vx;
-        y = y + vy;
+    let mut frame = move |curtime: f64| -> bool {
+        let deltatime = curtime - prevtime;
+        prevtime = curtime;
+        totaltime += deltatime;
+        x = x + (vx*deltatime);
+        y = y + (vy*deltatime);
         if (x > 1.0) || (0.0 > x) { vx *= -1.0 }
         if (y > 1.0) || (0.0 > y) { vy *= -1.0 }
 
-        ctx.set_fill_style(&"#000".into());
+        ctx.set_fill_style_str(&"#000");
         ctx.fill_rect(0.0, 0.0, 800.0, 600.0);
-        ctx.set_fill_style_str(&(format!("hsl({} 100% 50%)", time)));
+
+        ctx.set_fill_style_str(&(format!("hsl({} 100% 50%)", totaltime * 0.5)));
         ctx.fill_rect(x*750.0, y*550.0, 50.0, 50.0);
+        ctx.draw_image_with_html_image_element_and_dw_and_dh(&catimg, x*750.0, y*550.0, 50.0, 50.0).unwrap();
+
+        ctx.set_fill_style_str(&"#FFF");
+        ctx.set_font(&"bold 1em monospace");
+        ctx.fill_text(&(format!("dt: {} tt: {} fps: {}", deltatime, totaltime, (1000.0/deltatime).round())), 0.0, 10.0).unwrap();
         true 
     };
 
@@ -57,7 +73,7 @@ pub fn start() -> Result<(), JsValue> {
     let f = Rc::new(RefCell::new(None));
     let g = f.clone();
     *g.borrow_mut() = Some(Closure::new(move || {
-        if !(frame()) {return}
+        if !(frame(animtging.current_time().expect("time??"))) {return}
 
         // Schedule ourself for another requestAnimationFrame callback.
         request_animation_frame(f.borrow().as_ref().unwrap());

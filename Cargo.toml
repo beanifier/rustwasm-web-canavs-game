@@ -13,7 +13,9 @@ features = [
     "Document",
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
-    "MouseEvent"
+    "MouseEvent",
+    "DocumentTimeline",
+    "HtmlImageElement"
 ]
 
 [lib]
